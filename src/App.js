@@ -5,7 +5,7 @@ import { Upload, Brain, TrendingUp, Award, BookOpen, Target, Loader2, FileText, 
 // Create context for sharing analysis data
 const AnalysisContext = createContext();
 
-// Main Component - INSERT THE FULL COMPONENT HERE
+// Main Component - FIXED analyzeWithAI function to use /api/analyze
 const CareerRoadmapAI = () => {
   const [step, setStep] = useState('upload');
   const [loading, setLoading] = useState(false);
@@ -42,211 +42,82 @@ const CareerRoadmapAI = () => {
     }
   };
 
- const analyzeWithAI = async () => {
-  if (!resumeText && !transcriptText) {
-    alert('Please upload or paste your resume or transcript');
-    return;
-  }
-
-  setLoading(true);
-  setStep('analyzing');
-
-  try {
-    const prompt = `You are an expert career advisor specializing in IT and data careers. Analyze the following resume and academic transcript to create a personalized career roadmap.
-
-RESUME:
-${resumeText || 'Not provided'}
-
-TRANSCRIPT:
-${transcriptText || 'Not provided'}
-
-Based on this information, provide a comprehensive career analysis in the following JSON format (ONLY output valid JSON, no other text):
-
-{
-  "currentProfile": {
-    "currentRole": "string",
-    "yearsExperience": 5,
-    "salaryRange": "string (e.g., R300K-R400K or $60K-$80K)",
-    "keyStrengths": ["strength1", "strength2", "strength3", "strength4"],
-    "technicalSkills": ["skill1", "skill2", "skill3", "skill4", "skill5"],
-    "education": "string"
-  },
-  "careerPaths": [
-    {
-      "role": "string",
-      "priority": "High/Medium/Low",
-      "difficulty": "Easy/Medium/Hard",
-      "timeframe": "string (e.g., 3-6 months)",
-      "salaryRange": "string",
-      "seniorSalaryRange": "string",
-      "fitReason": "string explaining why this fits their background",
-      "requiredSkills": ["skill1", "skill2"]
+  // FIXED: Now properly calls your Next.js /api/analyze endpoint
+  const analyzeWithAI = async () => {
+    if (!resumeText && !transcriptText) {
+      alert('Please upload or paste your resume or transcript');
+      return;
     }
-  ],
-  "recommendedCourses": {
-    "immediate": [
-      {
-        "name": "string",
-        "platform": "Coursera/Udemy/edX/LinkedIn Learning",
-        "duration": "string",
-        "cost": "string",
-        "priority": "Highest/High/Medium",
-        "reason": "string explaining why this course",
-        "skills": ["skill1", "skill2"],
-        "url": "https://example.com"
+
+    setLoading(true);
+    setStep('analyzing');
+
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          resumeText,
+          transcriptText
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server error: ${response.status} - ${errorText}`);
       }
-    ],
-    "shortTerm": [],
-    "longTerm": []
-  },
-  "certifications": [
-    {
-      "name": "string",
-      "provider": "string",
-      "cost": "string",
-      "difficulty": "Associate/Professional/Expert",
-      "timeToComplete": "string",
-      "priority": "Highest/High/Medium/Low",
-      "reason": "string",
-      "salaryImpact": "string"
-    }
-  ],
-  "learningRoadmap": {
-    "phase1": {
-      "title": "string",
-      "duration": "string",
-      "focus": "string",
-      "expectedOutcome": "string",
-      "items": ["item1", "item2", "item3"]
-    },
-    "phase2": {
-      "title": "string",
-      "duration": "string",
-      "focus": "string",
-      "expectedOutcome": "string",
-      "items": ["item1", "item2", "item3"]
-    },
-    "phase3": {
-      "title": "string",
-      "duration": "string",
-      "focus": "string",
-      "expectedOutcome": "string",
-      "items": ["item1", "item2", "item3"]
-    }
-  },
-  "careerTimeline": [
-    {
-      "timeframe": "string",
-      "role": "string",
-      "salary": "string",
-      "requirements": ["req1", "req2"]
-    }
-  ]
-}
 
-Provide specific, actionable recommendations based on their actual experience, education, and market demand. Focus on realistic career progression with courses from Coursera, Udemy, edX, LinkedIn Learning, and certifications from AWS, Azure, Google, Microsoft, etc.`;
+      // For streaming response (text/event-stream), read as text and parse chunks
+      const reader = response.body.getReader();
+      let fullResponse = '';
 
-    const response = await fetch('', { // <-- Change this line
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert career advisor. You MUST respond with ONLY valid JSON in the exact format specified. Do not include any explanatory text, markdown, or code fences. Output pure JSON only.'
-          },
-          {
-            role: 'user',
-            content: prompt
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const chunk = new TextDecoder().decode(value);
+          fullResponse += chunk;
+          
+          // Extract JSON from SSE data (data: {...})
+          const jsonMatch = chunk.match(/data:\s*\{[\s\S]*?\}/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[0].replace('data: ', '').trim());
+              setAnalysis(parsed);
+            } catch (e) {
+              // Continue parsing
+            }
           }
-        ],
-        max_tokens: 4000,
-        temperature: 0.7,
-        response_format: { type: "json_object" }
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error: ${response.status} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    const analysisText = data.choices[0].message.content;
-    
-    // Try to extract JSON if it's wrapped in markdown
-    let jsonString = analysisText;
-    
-    // Remove markdown code fences if present
-    jsonString = jsonString.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    
-    // Also try to extract JSON if it's in the middle of other text
-    const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonString = jsonMatch[0];
-    }
-    
-    const parsedAnalysis = JSON.parse(jsonString);
-    setAnalysis(parsedAnalysis);
-    setStep('results');
-    
-  } catch (error) {
-    console.error('Analysis error:', error);
-    alert('Error analyzing your documents. Please try again.');
-    setStep('upload');
-  } finally {
-    setLoading(false);
-  }
-}; 
-const callAPI = async () => {
-const prompt = `Provide specific, actionable recommendations based on their actual experience, education, and market demand. 
-Focus on realistic career progression with courses from Coursera, Udemy, edX, LinkedIn Learning, and certifications from AWS, Azure, Google, Microsoft, etc.`;
-
-  const response = await fetch('https://api.deepseek.com/v1/chat/completions',  {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${process.env.REACT_APP_DEEPSEEK_API_KEY}`
-  },
-  body: JSON.stringify({
-    model: 'deepseek-chat',  // or 'deepseek-coder' for coding tasks
-    messages: [
-      {
-        role: 'user',
-        content: prompt
+        }
+      } finally {
+        reader.releaseLock();
       }
-    ],
-    max_tokens: 4000,
-    temperature: 0.7
-  })
-});
 
-      const data = await response.json();
-      const analysisText = data.content.find(block => block.type === 'text')?.text || '';
+      // Final parse if streaming didn't complete the object
+      if (!analysis || Object.keys(analysis).length === 0) {
+        // Clean up response text to extract JSON
+        let jsonString = fullResponse;
+        jsonString = jsonString.replace(/data:\s*/g, '').replace(/\[DONE\]/g, '');
+        
+        // Remove markdown if present
+        jsonString = jsonString.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        
+        // Extract largest JSON object
+        const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsedAnalysis = JSON.parse(jsonMatch[0]);
+          setAnalysis(parsedAnalysis);
+        }
+      }
+
+      setStep('results');
       
-      const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsedAnalysis = JSON.parse(jsonMatch[0]);
-        setAnalysis(parsedAnalysis);
-        setStep('results');
-      } else {
-        throw new Error('Could not parse AI response');
-      }
-    }
-     const analyzeDocuments = async () => {
-  setLoading(true);
-
-  try {
-    // your logic here
-    // await fetch(...)
-    
-  }
-    catch (error) {
+    } catch (error) {
       console.error('Analysis error:', error);
-      alert('Error analyzing your documents. Please try again.');
+      alert('Error analyzing your documents. Please try again.\n\n' + error.message);
       setStep('upload');
     } finally {
       setLoading(false);
@@ -385,14 +256,23 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
           <div className="text-center">
             <button
               onClick={analyzeWithAI}
-              disabled={!resumeText && !transcriptText}
+              disabled={!resumeText && !transcriptText || loading}
               className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-12 py-4 rounded-xl text-xl font-bold hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all inline-flex items-center gap-3"
             >
-              <Sparkles className="w-6 h-6" />
-              Generate My Career Roadmap
-              <ArrowRight className="w-6 h-6" />
+              {loading ? (
+                <>
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-6 h-6" />
+                  Generate My Career Roadmap
+                  <ArrowRight className="w-6 h-6" />
+                </>
+              )}
             </button>
-            <p className="text-slate-400 text-sm mt-4">AI analysis powered by deepseek</p>
+            <p className="text-slate-400 text-sm mt-4">AI analysis powered by your Next.js API</p>
           </div>
         </div>
       </div>
@@ -456,75 +336,82 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
             <div className="grid md:grid-cols-2 gap-6">
               <div>
                 <p className="text-slate-400 text-sm">Current Role</p>
-                <p className="text-white text-xl font-bold">{analysis.currentProfile.currentRole}</p>
+                <p className="text-white text-xl font-bold">{analysis.currentProfile?.currentRole || 'N/A'}</p>
               </div>
               <div>
                 <p className="text-slate-400 text-sm">Experience</p>
-                <p className="text-white text-xl font-bold">{analysis.currentProfile.yearsExperience} years</p>
+                <p className="text-white text-xl font-bold">{analysis.currentProfile?.yearsExperience || 0} years</p>
               </div>
               <div>
                 <p className="text-slate-400 text-sm">Current Salary Range</p>
-                <p className="text-emerald-400 text-xl font-bold">{analysis.currentProfile.salaryRange}</p>
+                <p className="text-emerald-400 text-xl font-bold">{analysis.currentProfile?.salaryRange || 'N/A'}</p>
               </div>
               <div>
                 <p className="text-slate-400 text-sm">Education</p>
-                <p className="text-white text-lg">{analysis.currentProfile.education}</p>
+                <p className="text-white text-lg">{analysis.currentProfile?.education || 'N/A'}</p>
               </div>
             </div>
             
             <div className="mt-6">
               <p className="text-slate-400 text-sm mb-3">Key Strengths</p>
               <div className="flex flex-wrap gap-2">
-                {analysis.currentProfile.keyStrengths.map((strength, idx) => (
+                {analysis.currentProfile?.keyStrengths?.map((strength, idx) => (
                   <span key={idx} className="bg-green-900 bg-opacity-40 border border-green-600 text-green-300 px-3 py-1 rounded-full text-sm">
                     {strength}
                   </span>
-                ))}
+                )) || <span className="text-slate-400 text-sm">No strengths identified</span>}
               </div>
             </div>
 
             <div className="mt-4">
               <p className="text-slate-400 text-sm mb-3">Technical Skills</p>
               <div className="flex flex-wrap gap-2">
-                {analysis.currentProfile.technicalSkills.map((skill, idx) => (
+                {analysis.currentProfile?.technicalSkills?.map((skill, idx) => (
                   <span key={idx} className="bg-purple-900 bg-opacity-40 border border-purple-600 text-purple-300 px-3 py-1 rounded-full text-sm">
                     {skill}
                   </span>
-                ))}
+                )) || <span className="text-slate-400 text-sm">No skills identified</span>}
               </div>
             </div>
           </div>
 
-          {/* Career Timeline */}
+          {/* Career Timeline - NOW WILL DISPLAY PROPERLY */}
           <div className="bg-gradient-to-r from-emerald-900 to-teal-900 bg-opacity-50 backdrop-blur border border-emerald-700 rounded-xl p-6">
             <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
               <TrendingUp className="w-6 h-6 text-emerald-400" />
               Your Career Growth Timeline
             </h2>
             <div className="space-y-4">
-              {analysis.careerTimeline.map((milestone, idx) => (
-                <div key={idx} className="flex items-center gap-4">
-                  <div className="bg-emerald-700 rounded-lg p-3 min-w-[120px] text-center">
-                    <p className="text-emerald-200 text-sm font-semibold">{milestone.timeframe}</p>
-                  </div>
-                  <ArrowRight className="text-emerald-400 w-6 h-6 flex-shrink-0" />
-                  <div className="bg-slate-800 bg-opacity-70 rounded-lg p-4 flex-1">
-                    <p className="text-white font-bold text-lg">{milestone.role}</p>
-                    <p className="text-emerald-400 font-semibold">{milestone.salary}</p>
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {milestone.requirements.map((req, i) => (
-                        <span key={i} className="text-slate-300 text-xs bg-slate-700 px-2 py-1 rounded">
-                          {req}
-                        </span>
-                      ))}
+              {analysis.careerTimeline?.length > 0 ? (
+                analysis.careerTimeline.map((milestone, idx) => (
+                  <div key={idx} className="flex items-center gap-4">
+                    <div className="bg-emerald-700 rounded-lg p-3 min-w-[120px] text-center">
+                      <p className="text-emerald-200 text-sm font-semibold">{milestone.timeframe}</p>
+                    </div>
+                    <ArrowRight className="text-emerald-400 w-6 h-6 flex-shrink-0" />
+                    <div className="bg-slate-800 bg-opacity-70 rounded-lg p-4 flex-1">
+                      <p className="text-white font-bold text-lg">{milestone.role}</p>
+                      <p className="text-emerald-400 font-semibold">{milestone.salary}</p>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {milestone.requirements?.map((req, i) => (
+                          <span key={i} className="text-slate-300 text-xs bg-slate-700 px-2 py-1 rounded">
+                            {req}
+                          </span>
+                        )) || <span className="text-slate-400 text-xs">No requirements listed</span>}
+                      </div>
                     </div>
                   </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-slate-400">
+                  <TrendingUp className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                  <p>No career timeline data available yet</p>
                 </div>
-              ))}
+              )}
             </div>
           </div>
 
-          {/* Recommended Courses */}
+          {/* Recommended Courses - NOW WILL DISPLAY PROPERLY */}
           <div className="bg-gradient-to-r from-blue-900 to-indigo-900 bg-opacity-50 backdrop-blur border border-blue-700 rounded-xl p-6">
             <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
               <BookOpen className="w-6 h-6 text-blue-400" />
@@ -532,7 +419,7 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
             </h2>
 
             {/* Immediate Priority */}
-            {analysis.recommendedCourses.immediate.length > 0 && (
+            {analysis.recommendedCourses?.immediate?.length > 0 && (
               <div className="mb-8">
                 <h3 className="text-xl font-bold text-yellow-300 mb-4 flex items-center gap-2">
                   <Target className="w-5 h-5" />
@@ -552,12 +439,17 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
                       </div>
                       <p className="text-slate-300 mb-3">{course.reason}</p>
                       <div className="flex flex-wrap gap-2">
-                        {course.skills.map((skill, i) => (
+                        {course.skills?.map((skill, i) => (
                           <span key={i} className="bg-purple-600 text-white px-3 py-1 rounded-full text-sm">
                             {skill}
                           </span>
-                        ))}
+                        )) || <span className="text-slate-400 text-sm">No skills listed</span>}
                       </div>
+                      {course.url && (
+                        <a href={course.url} target="_blank" rel="noopener noreferrer" className="inline-block mt-3 text-blue-400 hover:text-blue-300 text-sm underline">
+                          → View Course
+                        </a>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -565,7 +457,7 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
             )}
 
             {/* Short Term */}
-            {analysis.recommendedCourses.shortTerm.length > 0 && (
+            {analysis.recommendedCourses?.shortTerm?.length > 0 && (
               <div className="mb-8">
                 <h3 className="text-xl font-bold text-blue-300 mb-4">Short Term (3-9 Months)</h3>
                 <div className="space-y-4">
@@ -582,12 +474,17 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
                       </div>
                       <p className="text-slate-300 mb-3">{course.reason}</p>
                       <div className="flex flex-wrap gap-2">
-                        {course.skills.map((skill, i) => (
+                        {course.skills?.map((skill, i) => (
                           <span key={i} className="bg-purple-600 text-white px-3 py-1 rounded-full text-sm">
                             {skill}
                           </span>
-                        ))}
+                        )) || <span className="text-slate-400 text-sm">No skills listed</span>}
                       </div>
+                      {course.url && (
+                        <a href={course.url} target="_blank" rel="noopener noreferrer" className="inline-block mt-3 text-blue-400 hover:text-blue-300 text-sm underline">
+                          → View Course
+                        </a>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -595,7 +492,7 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
             )}
 
             {/* Long Term */}
-            {analysis.recommendedCourses.longTerm.length > 0 && (
+            {analysis.recommendedCourses?.longTerm?.length > 0 && (
               <div>
                 <h3 className="text-xl font-bold text-purple-300 mb-4">Long Term (9-18 Months)</h3>
                 <div className="space-y-4">
@@ -612,52 +509,75 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
                       </div>
                       <p className="text-slate-300 mb-3">{course.reason}</p>
                       <div className="flex flex-wrap gap-2">
-                        {course.skills.map((skill, i) => (
+                        {course.skills?.map((skill, i) => (
                           <span key={i} className="bg-purple-600 text-white px-3 py-1 rounded-full text-sm">
                             {skill}
                           </span>
-                        ))}
+                        )) || <span className="text-slate-400 text-sm">No skills listed</span>}
                       </div>
+                      {course.url && (
+                        <a href={course.url} target="_blank" rel="noopener noreferrer" className="inline-block mt-3 text-blue-400 hover:text-blue-300 text-sm underline">
+                          → View Course
+                        </a>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
             )}
+
+            {(!analysis.recommendedCourses || 
+              (analysis.recommendedCourses.immediate?.length === 0 && 
+               analysis.recommendedCourses.shortTerm?.length === 0 && 
+               analysis.recommendedCourses.longTerm?.length === 0)) && (
+              <div className="text-center py-12 border-2 border-dashed border-slate-700 rounded-xl text-slate-400">
+                <BookOpen className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                <p className="text-lg">No course recommendations available yet</p>
+                <p className="text-sm mt-2">Try uploading a more detailed resume/transcript</p>
+              </div>
+            )}
           </div>
 
-          {/* Industry Certifications */}
+          {/* Industry Certifications - KEPT WORKING AS-IS */}
           <div className="bg-gradient-to-r from-orange-900 to-red-900 bg-opacity-50 backdrop-blur border border-orange-700 rounded-xl p-6">
             <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
               <Award className="w-6 h-6 text-orange-400" />
               Industry Certifications to Pursue
             </h2>
-            <div className="grid md:grid-cols-2 gap-6">
-              {analysis.certifications.map((cert, idx) => (
-                <div key={idx} className="bg-slate-800 bg-opacity-70 rounded-xl p-5">
-                  <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-                    <h3 className="text-xl font-bold text-white">{cert.name}</h3>
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${
-                      cert.priority === 'Highest' ? 'bg-red-600 text-white' :
-                      cert.priority === 'High' ? 'bg-orange-600 text-white' :
-                      cert.priority === 'Medium' ? 'bg-blue-600 text-white' :
-                      'bg-slate-600 text-white'
-                    }`}>
-                      {cert.priority}
-                    </span>
+            {analysis.certifications?.length > 0 ? (
+              <div className="grid md:grid-cols-2 gap-6">
+                {analysis.certifications.map((cert, idx) => (
+                  <div key={idx} className="bg-slate-800 bg-opacity-70 rounded-xl p-5">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                      <h3 className="text-xl font-bold text-white">{cert.name}</h3>
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                        cert.priority === 'Highest' ? 'bg-red-600 text-white' :
+                        cert.priority === 'High' ? 'bg-orange-600 text-white' :
+                        cert.priority === 'Medium' ? 'bg-blue-600 text-white' :
+                        'bg-slate-600 text-white'
+                      }`}>
+                        {cert.priority}
+                      </span>
+                    </div>
+                    <div className="space-y-2 mb-4">
+                      <p className="text-slate-400 text-sm">Provider: <span className="text-white">{cert.provider}</span></p>
+                      <p className="text-slate-400 text-sm">Cost: <span className="text-emerald-400">{cert.cost}</span></p>
+                      <p className="text-slate-400 text-sm">Time: <span className="text-white">{cert.timeToComplete}</span></p>
+                      <p className="text-slate-400 text-sm">Level: <span className="text-purple-400">{cert.difficulty}</span></p>
+                    </div>
+                    <div className="bg-slate-900 bg-opacity-50 rounded-lg p-3 mb-3">
+                      <p className="text-slate-300 text-sm">{cert.reason}</p>
+                    </div>
+                    <p className="text-emerald-400 font-semibold text-sm">💰 Salary Impact: {cert.salaryImpact}</p>
                   </div>
-                  <div className="space-y-2 mb-4">
-                    <p className="text-slate-400 text-sm">Provider: <span className="text-white">{cert.provider}</span></p>
-                    <p className="text-slate-400 text-sm">Cost: <span className="text-emerald-400">{cert.cost}</span></p>
-                    <p className="text-slate-400 text-sm">Time: <span className="text-white">{cert.timeToComplete}</span></p>
-                    <p className="text-slate-400 text-sm">Level: <span className="text-purple-400">{cert.difficulty}</span></p>
-                  </div>
-                  <div className="bg-slate-900 bg-opacity-50 rounded-lg p-3 mb-3">
-                    <p className="text-slate-300 text-sm">{cert.reason}</p>
-                  </div>
-                  <p className="text-emerald-400 font-semibold text-sm">💰 Salary Impact: {cert.salaryImpact}</p>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 border-2 border-dashed border-slate-700 rounded-xl text-slate-400">
+                <Award className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                <p className="text-lg">No certifications recommended yet</p>
+              </div>
+            )}
           </div>
 
           {/* Learning Roadmap Phases */}
@@ -667,44 +587,51 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
               Your 3-Phase Learning Roadmap
             </h2>
             
-            {Object.entries(analysis.learningRoadmap).map(([phaseKey, phase], idx) => (
-              <div key={phaseKey} className="mb-6 last:mb-0">
-                <div className={`rounded-xl p-6 ${
-                  idx === 0 ? 'bg-green-900 bg-opacity-40 border-2 border-green-500' :
-                  idx === 1 ? 'bg-blue-900 bg-opacity-40 border-2 border-blue-500' :
-                  'bg-purple-900 bg-opacity-40 border-2 border-purple-500'
-                }`}>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold text-xl ${
-                      idx === 0 ? 'bg-green-700' :
-                      idx === 1 ? 'bg-blue-700' :
-                      'bg-purple-700'
-                    }`}>
-                      {idx + 1}
+            {analysis.learningRoadmap ? (
+              Object.entries(analysis.learningRoadmap).map(([phaseKey, phase], idx) => (
+                <div key={phaseKey} className="mb-6 last:mb-0">
+                  <div className={`rounded-xl p-6 ${
+                    idx === 0 ? 'bg-green-900 bg-opacity-40 border-2 border-green-500' :
+                    idx === 1 ? 'bg-blue-900 bg-opacity-40 border-2 border-blue-500' :
+                    'bg-purple-900 bg-opacity-40 border-2 border-purple-500'
+                  }`}>
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className={`w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold text-xl ${
+                        idx === 0 ? 'bg-green-700' :
+                        idx === 1 ? 'bg-blue-700' :
+                        'bg-purple-700'
+                      }`}>
+                        {idx + 1}
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-bold text-white">{phase.title}</h3>
+                        <p className="text-slate-300">{phase.duration} • Focus: {phase.focus}</p>
+                      </div>
+                    </div>
+                    <div className="bg-slate-900 bg-opacity-50 rounded-lg p-4 mb-4">
+                      <p className="text-emerald-300 font-semibold mb-2">Expected Outcome:</p>
+                      <p className="text-slate-200">{phase.expectedOutcome}</p>
                     </div>
                     <div>
-                      <h3 className="text-2xl font-bold text-white">{phase.title}</h3>
-                      <p className="text-slate-300">{phase.duration} • Focus: {phase.focus}</p>
+                      <p className="text-slate-300 font-semibold mb-2">Action Items:</p>
+                      <ul className="space-y-2">
+                        {phase.items?.map((item, i) => (
+                          <li key={i} className="flex items-start gap-2 text-slate-200">
+                            <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 flex-shrink-0" />
+                            <span>{item}</span>
+                          </li>
+                        )) || <li className="text-slate-400">No action items listed</li>}
+                      </ul>
                     </div>
                   </div>
-                  <div className="bg-slate-900 bg-opacity-50 rounded-lg p-4 mb-4">
-                    <p className="text-emerald-300 font-semibold mb-2">Expected Outcome:</p>
-                    <p className="text-slate-200">{phase.expectedOutcome}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-300 font-semibold mb-2">Action Items:</p>
-                    <ul className="space-y-2">
-                      {phase.items.map((item, i) => (
-                        <li key={i} className="flex items-start gap-2 text-slate-200">
-                          <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 flex-shrink-0" />
-                          <span>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
                 </div>
+              ))
+            ) : (
+              <div className="text-center py-12 border-2 border-dashed border-slate-700 rounded-xl text-slate-400">
+                <Calendar className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                <p className="text-lg">No learning roadmap available yet</p>
               </div>
-            ))}
+            )}
           </div>
 
           {/* Career Paths */}
@@ -713,50 +640,57 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
               <BarChart3 className="w-6 h-6 text-purple-400" />
               Potential Career Paths
             </h2>
-            <div className="grid md:grid-cols-2 gap-6">
-              {analysis.careerPaths.map((path, idx) => (
-                <div key={idx} className="bg-slate-700 bg-opacity-50 rounded-xl p-5 hover:bg-opacity-70 transition-all">
-                  <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-                    <h3 className="text-xl font-bold text-white">{path.role}</h3>
-                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${
-                      path.priority === 'High' ? 'bg-green-600 text-white' :
-                      path.priority === 'Medium' ? 'bg-blue-600 text-white' :
-                      'bg-slate-600 text-white'
-                    }`}>
-                      {path.priority}
-                    </span>
-                  </div>
-                  <div className="space-y-3 mb-4">
-                    <div>
-                      <p className="text-slate-400 text-sm">Timeframe</p>
-                      <p className="text-white font-semibold">{path.timeframe} • {path.difficulty}</p>
+            {analysis.careerPaths?.length > 0 ? (
+              <div className="grid md:grid-cols-2 gap-6">
+                {analysis.careerPaths.map((path, idx) => (
+                  <div key={idx} className="bg-slate-700 bg-opacity-50 rounded-xl p-5 hover:bg-opacity-70 transition-all">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                      <h3 className="text-xl font-bold text-white">{path.role}</h3>
+                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                        path.priority === 'High' ? 'bg-green-600 text-white' :
+                        path.priority === 'Medium' ? 'bg-blue-600 text-white' :
+                        'bg-slate-600 text-white'
+                      }`}>
+                        {path.priority}
+                      </span>
+                    </div>
+                    <div className="space-y-3 mb-4">
+                      <div>
+                        <p className="text-slate-400 text-sm">Timeframe</p>
+                        <p className="text-white font-semibold">{path.timeframe} • {path.difficulty}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400 text-sm">Junior/Mid Level</p>
+                        <p className="text-emerald-400 font-bold text-xl">{path.salaryRange}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400 text-sm">Senior Level</p>
+                        <p className="text-emerald-300 font-bold text-lg">{path.seniorSalaryRange}</p>
+                      </div>
+                    </div>
+                    <div className="bg-slate-900 bg-opacity-50 rounded-lg p-4 mb-4">
+                      <p className="text-blue-300 font-semibold mb-2">Why This Fits You:</p>
+                      <p className="text-slate-300 text-sm">{path.fitReason}</p>
                     </div>
                     <div>
-                      <p className="text-slate-400 text-sm">Junior/Mid Level</p>
-                      <p className="text-emerald-400 font-bold text-xl">{path.salaryRange}</p>
-                    </div>
-                    <div>
-                      <p className="text-slate-400 text-sm">Senior Level</p>
-                      <p className="text-emerald-300 font-bold text-lg">{path.seniorSalaryRange}</p>
-                    </div>
-                  </div>
-                  <div className="bg-slate-900 bg-opacity-50 rounded-lg p-4 mb-4">
-                    <p className="text-blue-300 font-semibold mb-2">Why This Fits You:</p>
-                    <p className="text-slate-300 text-sm">{path.fitReason}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-400 text-sm mb-2">Required Skills:</p>
-                    <div className="flex flex-wrap gap-2">
-                      {path.requiredSkills.map((skill, i) => (
-                        <span key={i} className="bg-purple-600 text-white text-xs px-3 py-1 rounded-full">
-                          {skill}
-                        </span>
-                      ))}
+                      <p className="text-slate-400 text-sm mb-2">Required Skills:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {path.requiredSkills?.map((skill, i) => (
+                          <span key={i} className="bg-purple-600 text-white text-xs px-3 py-1 rounded-full">
+                            {skill}
+                          </span>
+                        )) || <span className="text-slate-400 text-xs">No skills required</span>}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 border-2 border-dashed border-slate-700 rounded-xl text-slate-400">
+                <BarChart3 className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                <p className="text-lg">No career paths identified yet</p>
+              </div>
+            )}
           </div>
 
           {/* Investment Summary */}
@@ -769,21 +703,21 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
               <div className="bg-slate-900 bg-opacity-60 rounded-lg p-6 text-center">
                 <p className="text-slate-400 mb-2">Total Courses</p>
                 <p className="text-4xl font-bold text-green-400">
-                  {analysis.recommendedCourses.immediate.length + 
-                   analysis.recommendedCourses.shortTerm.length + 
-                   analysis.recommendedCourses.longTerm.length}
+                  {(analysis.recommendedCourses?.immediate?.length || 0) + 
+                   (analysis.recommendedCourses?.shortTerm?.length || 0) + 
+                   (analysis.recommendedCourses?.longTerm?.length || 0)}
                 </p>
                 <p className="text-slate-300 text-sm mt-2">Online Courses</p>
               </div>
               <div className="bg-slate-900 bg-opacity-60 rounded-lg p-6 text-center">
                 <p className="text-slate-400 mb-2">Certifications</p>
-                <p className="text-4xl font-bold text-green-400">{analysis.certifications.length}</p>
+                <p className="text-4xl font-bold text-green-400">{analysis.certifications?.length || 0}</p>
                 <p className="text-slate-300 text-sm mt-2">Industry Credentials</p>
               </div>
               <div className="bg-slate-900 bg-opacity-60 rounded-lg p-6 text-center">
                 <p className="text-slate-400 mb-2">Potential Salary</p>
                 <p className="text-4xl font-bold text-green-400">
-                  {analysis.careerTimeline[analysis.careerTimeline.length - 1].salary}
+                  {analysis.careerTimeline?.[analysis.careerTimeline.length - 1]?.salary || 'N/A'}
                 </p>
                 <p className="text-slate-300 text-sm mt-2">Within 2-3 Years</p>
               </div>
@@ -803,11 +737,7 @@ Focus on realistic career progression with courses from Coursera, Udemy, edX, Li
   return null;
 };
 
-// REST OF THE FILE CONTINUES WITH DashboardLayout, DashboardHome, CoursesPage, and App components...
-// You need to add the rest of the code from the previous response starting from line where DashboardLayout begins
-;
-
-// Dashboard Layout Component
+// Dashboard Layout Component (UNCHANGED)
 const DashboardLayout = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -911,7 +841,7 @@ const DashboardLayout = ({ children }) => {
   );
 };
 
-// Dashboard Home Component
+// Dashboard Home Component (UNCHANGED)
 const DashboardHome = () => {
   return (
     <div>
@@ -1014,26 +944,52 @@ const DashboardHome = () => {
   );
 };
 
-// Courses Page Component
+// Courses Page Component (CAN NOW USE analysis data via context)
 const CoursesPage = () => {
+  const { analysisData } = useContext(AnalysisContext) || {};
+  
   return (
     <div>
       <h1 className="text-3xl font-bold text-white mb-8">Recommended Courses</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Course cards would be dynamically generated from analysis data */}
-        <div className="bg-slate-800 rounded-xl p-6">
-          <div className="w-12 h-12 bg-purple-600 rounded-lg flex items-center justify-center mb-4">
-            <BookOpen className="w-6 h-6 text-white" />
-          </div>
-          <h3 className="text-xl font-bold text-white mb-2">AWS Solutions Architect</h3>
-          <p className="text-slate-400 text-sm mb-4">Coursera • 4 months • $49/month</p>
-          <div className="flex items-center justify-between">
-            <span className="px-3 py-1 bg-purple-600 text-white rounded-full text-sm">High Priority</span>
-            <button className="text-purple-400 hover:text-purple-300">View →</button>
-          </div>
+      {analysisData?.recommendedCourses ? (
+        <div className="space-y-6">
+          {analysisData.recommendedCourses.immediate?.length > 0 && (
+            <div>
+              <h2 className="text-2xl font-bold text-yellow-400 mb-4">Immediate Priority</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {analysisData.recommendedCourses.immediate.map((course, idx) => (
+                  <div key={idx} className="bg-slate-800 rounded-xl p-6 hover:bg-slate-700 transition-all">
+                    <div className="w-12 h-12 bg-yellow-600 rounded-lg flex items-center justify-center mb-4">
+                      <BookOpen className="w-6 h-6 text-white" />
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">{course.name}</h3>
+                    <p className="text-slate-400 text-sm mb-4">{course.platform} • {course.duration} • {course.cost}</p>
+                    <div className="flex items-center justify-between">
+                      <span className="px-3 py-1 bg-red-600 text-white rounded-full text-sm font-bold">
+                        {course.priority}
+                      </span>
+                      {course.url && (
+                        <a href={course.url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
+                          View →
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-        {/* Add more course cards */}
-      </div>
+      ) : (
+        <div className="text-center py-20 text-slate-400">
+          <BookOpen className="w-20 h-20 mx-auto mb-6 opacity-50" />
+          <p className="text-2xl">No courses available</p>
+          <p className="mt-2">Generate your career roadmap first to see personalized recommendations</p>
+          <Link to="/roadmap" className="mt-6 inline-block bg-purple-600 hover:bg-purple-700 text-white px-8 py-3 rounded-lg font-semibold transition-all">
+            Generate Roadmap →
+          </Link>
+        </div>
+      )}
     </div>
   );
 };
@@ -1065,7 +1021,7 @@ const App = () => {
             <DashboardLayout>
               <div className="text-white p-8 text-center">
                 <h1 className="text-3xl font-bold mb-4">Certifications Page</h1>
-                <p>Certifications content goes here</p>
+                <p>Certifications content goes here (working as before)</p>
               </div>
             </DashboardLayout>
           } />

@@ -8,19 +8,13 @@ export default async function handler(req, res) {
   try {
     const { resumeText, transcriptText } = req.body;
 
-    // Truncate to prevent token overflow
-    const truncatedResume = resumeText?.substring(0, 5000) || '';
-    const truncatedTranscript = transcriptText?.substring(0, 5000) || '';
+    // Truncate to prevent token overflow (adjust if DeepSeek has stricter limits)
+    const truncatedResume = resumeText?.substring(0, 4000) || '';
+    const truncatedTranscript = transcriptText?.substring(0, 4000) || '';
 
-    const prompt = `You are an expert career advisor specializing in IT and data careers. Analyze the following resume and academic transcript to create a personalized career roadmap.
-
-RESUME:
-${truncatedResume || 'Not provided'}
-
-TRANSCRIPT:
-${truncatedTranscript || 'Not provided'}
-
-Based on this information, provide a comprehensive career analysis in valid JSON format with the following structure: {
+    const systemMessage = `You are an expert career advisor specializing in IT and data careers. 
+Output ONLY valid JSON with this structure:
+{
   "currentProfile": {
     "currentRole": "string",
     "yearsExperience": 5,
@@ -40,6 +34,8 @@ Based on this information, provide a comprehensive career analysis in valid JSON
   ]
 }`;
 
+    const userMessage = `RESUME:\n${truncatedResume || 'Not provided'}\n\nTRANSCRIPT:\n${truncatedTranscript || 'Not provided'}`;
+
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -49,18 +45,11 @@ Based on this information, provide a comprehensive career analysis in valid JSON
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [
-          {
-            role: 'system',
-            content: 'You are an expert career advisor. Output ONLY valid JSON. No explanations, no markdown.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
+          { role: 'system', content: systemMessage },
+          { role: 'user', content: userMessage }
         ],
         max_tokens: 4000,
-        temperature: 0.7,
-        response_format: { type: "json_object" }
+        temperature: 0.7
       })
     });
 
@@ -70,14 +59,24 @@ Based on this information, provide a comprehensive career analysis in valid JSON
     }
 
     const data = await response.json();
-    res.status(200).json(data);
-    
+
+    // Safely extract and parse JSON from the model output
+    const content = data.choices?.[0]?.message?.content;
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      throw new Error('Invalid JSON returned from DeepSeek');
+    }
+
+    res.status(200).json(parsed);
+
   } catch (error) {
     console.error('API Error:', error);
-    res.status(500).json({ 
-      error: 'Analysis failed', 
+    res.status(500).json({
+      error: 'Analysis failed',
       message: error.message,
-      fallback: true 
+      fallback: true
     });
   }
 }
