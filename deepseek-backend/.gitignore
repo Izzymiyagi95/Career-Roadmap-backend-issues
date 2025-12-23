@@ -1,0 +1,5 @@
+# In your .gitignore file
+.env
+.env.local
+*.env
+deepseek-backend/.env

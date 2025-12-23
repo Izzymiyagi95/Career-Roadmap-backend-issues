@@ -1,11 +1,12 @@
 import React, { useState, createContext, useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { Upload, Brain, TrendingUp, Award, BookOpen, Target, Loader2, FileText, GraduationCap, Briefcase, CheckCircle2, ArrowRight, DollarSign, Calendar, Sparkles, BarChart3, X, Home, User, Settings, LogOut, Download } from 'lucide-react';
+import './App.css';
 
 // Create context for sharing analysis data
 const AnalysisContext = createContext();
 
-// Main Component - FIXED analyzeWithAI function to use /api/analyze
+// Main Component - FULLY FIXED
 const CareerRoadmapAI = () => {
   const [step, setStep] = useState('upload');
   const [loading, setLoading] = useState(false);
@@ -14,22 +15,35 @@ const CareerRoadmapAI = () => {
   const [resumeText, setResumeText] = useState('');
   const [transcriptText, setTranscriptText] = useState('');
   const [analysis, setAnalysis] = useState(null);
+  const { setAnalysisData } = useContext(AnalysisContext) || {};
 
   const handleFileUpload = async (file, type) => {
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const text = e.target.result;
+    // For text files, read content
+    if (file.name.toLowerCase().endsWith('.txt')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target.result;
+        if (type === 'resume') {
+          setResumeText(text);
+          setResumeFile(file);
+        } else {
+          setTranscriptText(text);
+          setTranscriptFile(file);
+        }
+      };
+      reader.readAsText(file);
+    } else {
+      // For PDF/DOCX, just store the file (backend will process it)
       if (type === 'resume') {
-        setResumeText(text);
         setResumeFile(file);
+        setResumeText(''); // Clear text if file is uploaded
       } else {
-        setTranscriptText(text);
         setTranscriptFile(file);
+        setTranscriptText(''); // Clear text if file is uploaded
       }
-    };
-    reader.readAsText(file);
+    }
   };
 
   const removeFile = (type) => {
@@ -42,9 +56,9 @@ const CareerRoadmapAI = () => {
     }
   };
 
-  // FIXED: Now properly calls your Next.js /api/analyze endpoint
+  // FIXED: Proper file upload with FormData
   const analyzeWithAI = async () => {
-    if (!resumeText && !transcriptText) {
+    if (!resumeText && !transcriptText && !resumeFile && !transcriptFile) {
       alert('Please upload or paste your resume or transcript');
       return;
     }
@@ -53,71 +67,67 @@ const CareerRoadmapAI = () => {
     setStep('analyzing');
 
     try {
-      const response = await fetch('/api/analyze', {
+      // Create FormData for file uploads
+      const formData = new FormData();
+      
+      // Add files if present
+      if (resumeFile) {
+        formData.append('resume', resumeFile);
+        console.log('Adding resume file:', resumeFile.name);
+      }
+      if (transcriptFile) {
+        formData.append('transcript', transcriptFile);
+        console.log('Adding transcript file:', transcriptFile.name);
+      }
+      
+      // Add text content if files weren't uploaded
+      if (!resumeFile && resumeText) {
+        formData.append('resumeText', resumeText);
+        console.log('Adding resume text');
+      }
+      if (!transcriptFile && transcriptText) {
+        formData.append('transcriptText', transcriptText);
+        console.log('Adding transcript text');
+      }
+
+      console.log('Sending analysis request to backend...');
+      
+      // Send to backend (change URL if using proxy)
+      const response = await fetch('http://localhost:4000/api/analyze', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          resumeText,
-          transcriptText
-        })
+        body: formData,
+        // Don't set Content-Type - browser will set it with boundary for FormData
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server error: ${response.status} - ${errorText}`);
-      }
-
-      // For streaming response (text/event-stream), read as text and parse chunks
-      const reader = response.body.getReader();
-      let fullResponse = '';
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          const chunk = new TextDecoder().decode(value);
-          fullResponse += chunk;
-          
-          // Extract JSON from SSE data (data: {...})
-          const jsonMatch = chunk.match(/data:\s*\{[\s\S]*?\}/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[0].replace('data: ', '').trim());
-              setAnalysis(parsed);
-            } catch (e) {
-              // Continue parsing
-            }
-          }
+        let errorMessage = `Server error: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorData.error || errorMessage;
+        } catch (e) {
+          // Response wasn't JSON
         }
-      } finally {
-        reader.releaseLock();
+        throw new Error(errorMessage);
       }
 
-      // Final parse if streaming didn't complete the object
-      if (!analysis || Object.keys(analysis).length === 0) {
-        // Clean up response text to extract JSON
-        let jsonString = fullResponse;
-        jsonString = jsonString.replace(/data:\s*/g, '').replace(/\[DONE\]/g, '');
-        
-        // Remove markdown if present
-        jsonString = jsonString.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        
-        // Extract largest JSON object
-        const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsedAnalysis = JSON.parse(jsonMatch[0]);
-          setAnalysis(parsedAnalysis);
-        }
+      const analysisResult = await response.json();
+      console.log('Analysis complete:', analysisResult);
+      
+      setAnalysis(analysisResult);
+      if (setAnalysisData) {
+        setAnalysisData(analysisResult); // Store in context
       }
-
       setStep('results');
       
     } catch (error) {
       console.error('Analysis error:', error);
-      alert('Error analyzing your documents. Please try again.\n\n' + error.message);
+      alert(
+        `Error: ${error.message}\n\n` +
+        `Please make sure:\n` +
+        `1. Backend server is running on port 4000\n` +
+        `2. Run: cd deepseek-backend && node server.js\n` +
+        `3. DeepSeek API key is configured in .env file`
+      );
       setStep('upload');
     } finally {
       setLoading(false);
@@ -194,8 +204,9 @@ const CareerRoadmapAI = () => {
                 <textarea
                   value={resumeText}
                   onChange={(e) => setResumeText(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-4 text-white placeholder-slate-500 min-h-[150px] focus:border-purple-500 focus:outline-none"
-                  placeholder="Paste your resume here..."
+                  disabled={!!resumeFile}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-4 text-white placeholder-slate-500 min-h-[150px] focus:border-purple-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder={resumeFile ? "File uploaded - remove file to paste text" : "Paste your resume here..."}
                 />
               </div>
             </div>
@@ -246,8 +257,9 @@ const CareerRoadmapAI = () => {
                 <textarea
                   value={transcriptText}
                   onChange={(e) => setTranscriptText(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-4 text-white placeholder-slate-500 min-h-[150px] focus:border-purple-500 focus:outline-none"
-                  placeholder="Paste your transcript here..."
+                  disabled={!!transcriptFile}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-4 text-white placeholder-slate-500 min-h-[150px] focus:border-purple-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder={transcriptFile ? "File uploaded - remove file to paste text" : "Paste your transcript here..."}
                 />
               </div>
             </div>
@@ -256,7 +268,7 @@ const CareerRoadmapAI = () => {
           <div className="text-center">
             <button
               onClick={analyzeWithAI}
-              disabled={!resumeText && !transcriptText || loading}
+              disabled={(!resumeText && !transcriptText && !resumeFile && !transcriptFile) || loading}
               className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-12 py-4 rounded-xl text-xl font-bold hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all inline-flex items-center gap-3"
             >
               {loading ? (
@@ -272,7 +284,9 @@ const CareerRoadmapAI = () => {
                 </>
               )}
             </button>
-            <p className="text-slate-400 text-sm mt-4">AI analysis powered by your Next.js API</p>
+            <p className="text-slate-400 text-sm mt-4">
+              AI analysis powered by DeepSeek • Backend: {window.location.hostname === 'localhost' ? '✅ Local' : '⚠️ Check connection'}
+            </p>
           </div>
         </div>
       </div>
@@ -290,6 +304,10 @@ const CareerRoadmapAI = () => {
           <div className="space-y-3 text-purple-200 text-lg">
             <p className="flex items-center justify-center gap-2">
               <Loader2 className="w-5 h-5 animate-spin" />
+              Processing your documents
+            </p>
+            <p className="flex items-center justify-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
               Evaluating your experience and skills
             </p>
             <p className="flex items-center justify-center gap-2">
@@ -298,13 +316,10 @@ const CareerRoadmapAI = () => {
             </p>
             <p className="flex items-center justify-center gap-2">
               <Loader2 className="w-5 h-5 animate-spin" />
-              Recommending courses and certifications
-            </p>
-            <p className="flex items-center justify-center gap-2">
-              <Loader2 className="w-5 h-5 animate-spin" />
               Building your personalized roadmap
             </p>
           </div>
+          <p className="text-slate-400 text-sm mt-8">This may take 10-30 seconds...</p>
         </div>
       </div>
     );
@@ -375,7 +390,7 @@ const CareerRoadmapAI = () => {
             </div>
           </div>
 
-          {/* Career Timeline - NOW WILL DISPLAY PROPERLY */}
+          {/* Career Timeline */}
           <div className="bg-gradient-to-r from-emerald-900 to-teal-900 bg-opacity-50 backdrop-blur border border-emerald-700 rounded-xl p-6">
             <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
               <TrendingUp className="w-6 h-6 text-emerald-400" />
@@ -411,7 +426,7 @@ const CareerRoadmapAI = () => {
             </div>
           </div>
 
-          {/* Recommended Courses - NOW WILL DISPLAY PROPERLY */}
+          {/* Recommended Courses */}
           <div className="bg-gradient-to-r from-blue-900 to-indigo-900 bg-opacity-50 backdrop-blur border border-blue-700 rounded-xl p-6">
             <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
               <BookOpen className="w-6 h-6 text-blue-400" />
@@ -538,7 +553,7 @@ const CareerRoadmapAI = () => {
             )}
           </div>
 
-          {/* Industry Certifications - KEPT WORKING AS-IS */}
+          {/* Industry Certifications */}
           <div className="bg-gradient-to-r from-orange-900 to-red-900 bg-opacity-50 backdrop-blur border border-orange-700 rounded-xl p-6">
             <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
               <Award className="w-6 h-6 text-orange-400" />
