@@ -93,7 +93,7 @@ const CareerRoadmapAI = () => {
       console.log('Sending analysis request to backend...');
       
       // Send to backend (change URL if using proxy)
-      const response = await fetch('api/analyze', {
+      const response = await fetch('http://localhost:4000/api/analyze', {
         method: 'POST',
         body: formData,
         // Don't set Content-Type - browser will set it with boundary for FormData
