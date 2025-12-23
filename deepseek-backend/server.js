@@ -28,6 +28,7 @@ const upload = multer({
 });
 
 // ---- CORS configuration ----
+app.options('*', cors());
 app.use(
   cors({
     origin: ['http://localhost:3000', 'http://localhost:3001'],
@@ -216,10 +217,11 @@ app.post(
       return res.status(200).json(parsed);
     } catch (error) {
       console.error('❌ Analysis error:', error);
-      return res.status(500).json({ error: 'Analysis failed', message: error.message });
-    }
-  }
-);
+     return res.status(500).json({
+  error: 'Analysis failed',
+  message: error.message,
+  suggestion: 'Check if DeepSeek API key is valid and service is operational'
+});
 
 // ---- Health check ----
 app.get('/api/health', (req, res) => {
