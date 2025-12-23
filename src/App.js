@@ -15,7 +15,8 @@ const CareerRoadmapAI = () => {
   const [resumeText, setResumeText] = useState('');
   const [transcriptText, setTranscriptText] = useState('');
   const [analysis, setAnalysis] = useState(null);
-  const { setAnalysisData } = useContext(AnalysisContext) || {};
+  const contextValue = useContext(AnalysisContext);
+  const setAnalysisData = contextValue?.setAnalysisData;
 
   const handleFileUpload = async (file, type) => {
     if (!file) return;
